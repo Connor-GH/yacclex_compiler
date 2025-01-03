@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include "node.h"
 
 // Declare tokens
@@ -13,7 +14,8 @@ int var_count = 0;
 // Function declarations
 int yylex(void);
 void yyerror(FILE *fp, const char *s, ...);
-static Variable* lookup_variable(const char *s, FILE *fp);
+static Variable *lookup_variable(const char *s, FILE *fp);
+static bool variable_reassign(const char *s, Node *expr, FILE *fp);
 extern Node *AST;
 
 %}
@@ -157,6 +159,9 @@ Primary
 		: IDENTIFIER {
 			Node *n = make_node(NODE_TYPE_VAR);
 			n->data = lookup_variable($1, fp);
+			if (n->data == NULL)
+				yyerror(fp, "variable %s not found\n", $1);
+
 			free($1);
 			$$ = n;
 			}
@@ -218,20 +223,37 @@ Statement /* let <ID> <: Type>* = <expr>; */
 					if (type_of_node($3) != let_type) {
 						yyerror(fp, "type of variable does not match expression type (%s vs %s)", type_to_string(let_type), type_to_string(type_of_node($3)));
 					}
-						Variable *var = make_variable($1->data, $3);
-						// LetIdentifierType is unboxed and we abandon the box here
-						free($1);
+					Variable *errvar;
+					if (( errvar = lookup_variable(((VariableDeclaration *)$1->data)->identifier, fp)) != NULL) {
+						Node *tmpnode = make_node(NODE_TYPE_VAR);
+						tmpnode->data = errvar;
+						finalize_tree(tmpnode);
+						yyerror(fp, "Variable redeclaration of `%s'", ((VariableDeclaration *)$1->data)->identifier);
+					}
 
-						variables[var_count] = var;				// Save variable value
-						var_count++;
-						Node *n = make_node(NODE_TYPE_VAR);
-						n->data = var;
-						$$ = n;
+					Variable *var = make_variable($1->data, $3);
+					// LetIdentifierType is unboxed and we abandon the box here
+					free($1);
+
+					variables[var_count] = var;				// Save variable value
+					var_count++;
+					Node *n = make_node(NODE_TYPE_VAR);
+					n->data = var;
+					$$ = n;
 				} else {
 						yyerror(fp, "Too many variables declared.");
 				}
 		}
-		| IDENTIFIER '=' Expression ';' {}
+		| IDENTIFIER '=' Expression ';' {
+			bool reassigned = variable_reassign($1, $3, fp);
+			if (!reassigned) {
+				yyerror(fp, "Variable %s not found when trying to assign", $1);
+			}
+			Variable *var = lookup_variable($1, fp);
+			Node *n = make_node(NODE_TYPE_VAR);
+			n->data = var;
+			$$ = n;
+		}
 		| WhileLoop { $$ = $1; }
 		| ForLoop { $$ = $1; }
 		| FunctionDeclaration { $$ = $1; }
@@ -308,12 +330,25 @@ void yyerror(FILE *fp, const char *s, ...) {
 Variable *lookup_variable(const char *s, FILE *fp)
 {
 	for (int i = 0; i < MAX_VARIABLES; i++) {
-		if (variables[i] != NULL && variables[i]->var_decl != NULL && strcmp(s, variables[i]->var_decl->identifier) == 0) {
+		if (variables[i] != NULL && variables[i]->var_decl != NULL &&
+			variables[i]->var_decl->identifier != NULL &&
+			strcmp(s, variables[i]->var_decl->identifier) == 0) {
 			return deep_copy_var(variables[i]);
 		}
 	}
-	yyerror(fp, "variable %s not found\n", s);
-	return 0;
+	return NULL;
+}
+bool variable_reassign(const char *s, Node *expr, FILE *fp)
+{
+	for (int i = 0; i < MAX_VARIABLES; i++) {
+		if (variables[i] != NULL && variables[i]->var_decl != NULL &&
+			variables[i]->var_decl->identifier != NULL &&
+			strcmp(s, variables[i]->var_decl->identifier) == 0) {
+			variables[i]->init = expr;
+			return true;
+		}
+	}
+	return false;
 }
 int
 yyreport_syntax_error(const yypcontext_t *ctx, FILE *fp)
