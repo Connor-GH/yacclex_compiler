@@ -6,7 +6,20 @@
 #include "node.h"
 #include "parser.h"
 
+// track lines and columns
+#define YY_USER_ACTION                                       \
+  yylloc.first_line = yylloc.last_line;                      \
+  yylloc.first_column = yylloc.last_column;                  \
+  if (yylloc.first_line == yylineno)                         \
+     yylloc.last_column += yyleng;                           \
+  else {                                                     \
+     int col = 1;                                            \
+     for (; yytext[yyleng - col] != '\n'; col++) {}          \
+     yylloc.last_column = col;                               \
+     yylloc.last_line = yylineno;                            \
+  }
 %}
+%option yylineno
 digit [0-9]
 identifier [a-zA-Z_][a-zA-Z0-9_]*
 multiline_comment \/\*(.|\n|\r|\t)*\*\/
@@ -37,7 +50,7 @@ string \"([^"\\]*(\\.[^"\\]*)*)\"
     return IDENTIFIER;
 }
 
-{digit}+      {
+{digit}+ {
     yylval.num = atoi(yytext);
     return NUMBER;
 }

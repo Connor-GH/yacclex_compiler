@@ -56,17 +56,17 @@ typedef struct {
 } Variable;
 
 
-// fn IDENT ( VariableDeclarations* ) -> TYPE* { BLOCK* }
-typedef struct {
-	Type typeinfo;
-	const char *identifier;
-	VariableDeclarations *var_decls;
-} Function;
-
 typedef struct statements {
 	Node *statement;
 	struct statements *next;
 } Statements;
+// fn IDENT ( VariableDeclarations* ) -> TYPE { BLOCK* }
+typedef struct {
+	Type typeinfo;
+	const char *identifier;
+	VariableDeclarations *var_decls;
+	Statements *statements;
+} Function;
 
 Variable *deep_copy_var(Variable *to_copy);
 Value *deep_copy_value(Value *to_copy);

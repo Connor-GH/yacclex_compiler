@@ -127,12 +127,30 @@ Function *make_function(const char *identifier, VariableDeclarations *var_decls,
 	func->typeinfo = type;
 	func->var_decls = var_decls;
 	func->identifier = identifier;
+	func->statements = statements;
 	return func;
 }
 Variable *deep_copy_var(Variable *to_copy) {
 	Variable *to_return = make_variable(deep_copy_vardecl(to_copy->var_decl),
 																		 deep_copy_node(to_copy->init));
 	return to_return;
+}
+Node *box_vardecls(VariableDeclarations *vardecls) {
+	Node *n = make_node(NODE_TYPE_VARDECLS);
+	n->data = vardecls;
+	return n;
+}
+
+Node *box_vardecl(VariableDeclaration *vardecl) {
+	Node *n = make_node(NODE_TYPE_VARDECL);
+	n->data = vardecl;
+	return n;
+}
+
+Node *box_statements(Statements *statements) {
+	Node *n = make_node(NODE_TYPE_STATEMENTS);
+	n->data = statements;
+	return n;
 }
 
 Value *deep_copy_value(Value *to_copy) {
@@ -214,6 +232,10 @@ const char *type_to_string(Type type) {
     return "int";
   case TYPE_STRING:
     return "string";
+	case TYPE_VOID:
+		return "void";
+	case TYPE_AUTO:
+		return "auto";
   default:
     return "unknown";
   }
@@ -348,6 +370,8 @@ static void print_walk(Node *node, const char *prefix) {
 				printf("%lu\n", (unsigned long)value->data);
 			} else if (value->typeinfo == TYPE_STRING) {
 				printf("\"%s\"\n", (char *)value->data);
+			} else if (value->typeinfo == TYPE_VOID) {
+					printf("() [void type]\n");
 			} else {
 				printf("unknown\n");
 			}
@@ -358,17 +382,47 @@ static void print_walk(Node *node, const char *prefix) {
     Variable *var = (Variable *)node->data;
     if (var != NULL) {
       printf("%s%sVariable: \n", prefix, arrow);
-			printf("%s  %s\033[1;35mtypeinfo\033[0m: %s\n", prefix, arrow,
-								type_to_string(var->var_decl->typeinfo));
-			printf("%s  %s\033[1;34midentifier\033[0m: %s\n", prefix, arrow, var->var_decl->identifier);
-			printf("%s  %s\033[1;38;5;115minit\033[0m:\n", prefix, end_arrow);
-			sprintf(next_prefix, "%s  %s", prefix, end_segment);
+
+			sprintf(next_prefix, "%s%s", prefix, segment);
+			Node *vardecl_box = box_vardecl(var->var_decl);
+			print_walk(vardecl_box, next_prefix);
+			free(vardecl_box);
+
+			sprintf(next_prefix, "%s%s", prefix, end_segment);
+			printf("%s%s\033[1;38;5;115minit\033[0m:\n", prefix, end_arrow);
 			print_walk(var->init, next_prefix);
+
 			if (var->var_decl->typeinfo == TYPE_INT && DEBUG_CONSTFOLD == 1)
 				printf("constfold(%s) => %ld\n", var->var_decl->identifier, constfold(var->init));
     }
     break;
   }
+	case NODE_TYPE_VARDECL: {
+		VariableDeclaration *var_decl = node->data;
+		if (var_decl != NULL) {
+			printf("%s%sVariableDeclaration:\n", prefix, arrow);
+			printf("%s  %s\033[1;35mtypeinfo\033[0m: %s\n", prefix, arrow,
+								type_to_string(var_decl->typeinfo));
+			printf("%s  %s\033[1;34midentifier\033[0m: %s\n", prefix, end_arrow, var_decl->identifier);
+		}
+		break;
+	}
+	case NODE_TYPE_VARDECLS: {
+		VariableDeclarations *var_decls = node->data;
+		if (var_decls != NULL) {
+			printf("%s%sVariableDeclarations:\n", prefix, end_arrow);
+			sprintf(next_prefix, "%s%s", prefix, end_segment);
+
+			Node *this_vardecl = box_vardecl(var_decls->var_decl);
+			print_walk(this_vardecl, next_prefix);
+			free(this_vardecl);
+
+			Node *next_vardecls = box_vardecls(var_decls->next);
+			print_walk(next_vardecls, next_prefix);
+			free(next_vardecls);
+		}
+		break;
+	}
 	case NODE_TYPE_STATEMENTS: {
 		Statements *statements = (Statements *)node->data;
 		Statements *st = statements;
@@ -382,6 +436,27 @@ static void print_walk(Node *node, const char *prefix) {
 			}
 			print_walk(st->statement, next_prefix);
 		}
+		break;
+	}
+	case NODE_TYPE_FUNC: {
+		Function *function = node->data;
+		printf("%s%sFunction:\n", prefix, end_arrow);
+		printf("%s  %stypeinfo: %s\n", prefix, arrow, type_to_string(function->typeinfo));
+		printf("%s  %sidentifier: %s\n", prefix, arrow, function->identifier);
+		printf("%s  %sFunctionArguments:\n", prefix, arrow);
+
+		sprintf(next_prefix, "%s  %s", prefix, segment);
+
+		Node *vardecls_n = box_vardecls(function->var_decls);
+		print_walk(vardecls_n, next_prefix);
+		free(vardecls_n);
+
+		sprintf(next_prefix, "%s%s", prefix, end_segment);
+
+		Node *statements_n = box_statements(function->statements);
+		print_walk(statements_n, next_prefix);
+		free(statements_n);
+
 		break;
 	}
   default:
@@ -443,17 +518,41 @@ void finalize_tree(Node *node) {
     }
     break;
   }
+	case NODE_TYPE_VARDECLS: {
+		VariableDeclarations *var_decls = node->data;
+		if (var_decls != NULL) {
+			Node *s = box_vardecl(var_decls->var_decl);
+			finalize_tree(s);
+
+			Node *next_vardecl = box_vardecls(var_decls->next);
+			finalize_tree(next_vardecl);
+			free(var_decls);
+		}
+		break;
+	}
 	case NODE_TYPE_STATEMENTS: {
 		Statements *statements = node->data;
 		if (statements != NULL) {
-			Node *s = make_node(NODE_TYPE_STATEMENTS);
-			s->data = statements->next;
+			Node *s = box_statements(statements->next);
 			finalize_tree(s);
 			finalize_tree(statements->statement);
 			free(statements);
 		}
 		break;
 	}
+	case NODE_TYPE_FUNC: {
+		Function *function = node->data;
+		if (function != NULL) {
+			free(function->identifier);
+			Node *vardecls = box_vardecls(function->var_decls);
+			finalize_tree(vardecls);
+			Node *statements = box_statements(function->statements);
+			finalize_tree(statements);
+			free(function);
+		}
+
+		break;
+		}
   default:
     printf("Unknown node type when trying to free: %d\n", node->type);
 		break;

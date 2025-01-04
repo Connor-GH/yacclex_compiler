@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include "node.h"
+#include "driver.h"
 
 // Declare tokens
 #define MAX_VARIABLES 100
@@ -14,6 +15,7 @@ int var_count = 0;
 // Function declarations
 int yylex(void);
 void yyerror(FILE *fp, const char *s, ...);
+void yyerror_verbose(FILE *fp, const char *s, size_t lineno, size_t first_column, size_t last_column, ...);
 static Variable *lookup_variable(const char *s, FILE *fp);
 static bool variable_reassign(const char *s, Node *expr, FILE *fp);
 extern Node *AST;
@@ -221,14 +223,14 @@ Statement /* let <ID> <: Type>* = <expr>; */
 						((VariableDeclaration *)$1->data)->typeinfo = let_type;
 					}
 					if (type_of_node($3) != let_type) {
-						yyerror(fp, "type of variable does not match expression type (%s vs %s)", type_to_string(let_type), type_to_string(type_of_node($3)));
+						yyerror_verbose(fp, "type of variable does not match expression type (%s vs %s)", @1.first_line, @1.first_column, @3.last_column, type_to_string(let_type), type_to_string(type_of_node($3)));
 					}
 					Variable *errvar;
 					if (( errvar = lookup_variable(((VariableDeclaration *)$1->data)->identifier, fp)) != NULL) {
 						Node *tmpnode = make_node(NODE_TYPE_VAR);
 						tmpnode->data = errvar;
 						finalize_tree(tmpnode);
-						yyerror(fp, "Variable redeclaration of `%s'", ((VariableDeclaration *)$1->data)->identifier);
+						yyerror_verbose(fp, "Variable redeclaration of `%s'", @1.first_line, @1.first_column, @1.last_column, ((VariableDeclaration *)$1->data)->identifier);
 					}
 
 					Variable *var = make_variable($1->data, $3);
@@ -247,7 +249,7 @@ Statement /* let <ID> <: Type>* = <expr>; */
 		| IDENTIFIER '=' Expression ';' {
 			bool reassigned = variable_reassign($1, $3, fp);
 			if (!reassigned) {
-				yyerror(fp, "Variable %s not found when trying to assign", $1);
+				yyerror_verbose(fp, "Variable %s not found when trying to assign", @1.first_line, @1.first_column, @1.last_column, $1);
 			}
 			Variable *var = lookup_variable($1, fp);
 			Node *n = make_node(NODE_TYPE_VAR);
@@ -261,27 +263,70 @@ Statement /* let <ID> <: Type>* = <expr>; */
 		;
 
 StatementBlock
-		: '{' Statements '}'
-		| '{' /* empty */ '}'
+		: '{' Statements '}' { $$ = $2; }
+		| '{' /* empty */ '}' {
+		  // an empty block has value '()', which is of type void.
+			Node *n = make_node(NODE_TYPE_STATEMENTS);
+			Statements *statements = malloc(sizeof(*statements));
+			// only one statement
+			statements->next = NULL;
+
+			Node *n_val = make_node(NODE_TYPE_VALUE);
+
+			// data being NULL and typeinfo being TYPE_VOID signifies '()'
+			Value *value = malloc(sizeof(*value));
+			value->typeinfo = TYPE_VOID;
+			value->data = NULL;
+
+			n_val->data = value;
+			statements->statement = n_val;
+			n->data = statements;
+			$$ = n;
+		}
 		;
 
 Empty
 		: ;
 
 FunctionArguments
-		: IDENTIFIER ':' Type ',' FunctionArguments
-		| IDENTIFIER ':' Type
-		| Empty
+		: IDENTIFIER ':' Type ',' FunctionArguments {
+			Node *n = make_node(NODE_TYPE_VARDECLS);
+			VariableDeclarations *var_decls = malloc(sizeof(*var_decls));
+			var_decls->var_decl = make_vardecl($3, $1);
+			var_decls->next = $5->data;
+			free($5);
+			n->data = var_decls;
+			$$ = n;
+
+		}
+		| IDENTIFIER ':' Type {
+			Node *n = make_node(NODE_TYPE_VARDECLS);
+			VariableDeclarations *var_decls = malloc(sizeof(*var_decls));
+			VariableDeclaration *var_decl = make_vardecl($3, $1);
+
+			var_decls->var_decl = var_decl;
+			var_decls->next = NULL;
+			n->data = var_decls;
+			$$ = n;
+		}
+		| Empty {
+			// empty arguments is just NULL everywhere.
+			Node *n = make_node(NODE_TYPE_VARDECLS);
+			VariableDeclarations *var_decls = malloc(sizeof(*var_decls));
+			var_decls->var_decl = NULL;
+			var_decls->next = NULL;
+			n->data = var_decls;
+			$$ = n;
+		}
 		;
 
 FunctionDeclaration
 		: FN IDENTIFIER '(' FunctionArguments ')' THIN_ARROW Type StatementBlock {
-			/*Node *n = make_node(NODE_TYPE_FUNC);
+			Node *n = make_node(NODE_TYPE_FUNC);
 			n->data = make_function($2, $4->data, $7, $8->data);
 			free($4);
 			free($8);
-			$$ = n;*/
-
+			$$ = n;
 		}
 		;
 
@@ -317,14 +362,35 @@ ForLoop
 
 %%
 
-// Error handling
 void yyerror(FILE *fp, const char *s, ...) {
-		fprintf(stderr, "\033[1;31mError:\033[0m ");
+	fprintf(stderr, "\033[1;31mError\033[0m ");
+	va_list listp;
+	va_start(listp, s);
+	vfprintf(stderr, s, listp);
+	va_end(listp);
+	fprintf(stderr, "\n");
+	exit(1);
+}
+// Error handling
+void yyerror_verbose(FILE *fp, const char *s, size_t lineno, size_t first_column, size_t last_column, ...) {
+		fprintf(stderr, "\033[1;31mError:%zu:%zu-%zu:\033[0m ", lineno, first_column, last_column);
 		va_list listp;
-		va_start(listp, s);
+		va_start(listp, last_column);
 		vfprintf(stderr, s, listp);
 		va_end(listp);
 		fprintf(stderr, "\n");
+		// doesn't end in \n because fgets() contains \n
+		fprintf(stderr, " %4zu | %s", lineno, make_line_string_from_file(lineno));
+		fprintf(stderr, "      | ");
+		for (int i = 0; i < first_column-1; i++) {
+			fprintf(stderr, " ");
+		}
+		fprintf(stderr, "\033[1;31m^");
+		for (size_t i = first_column; i < last_column-1; i++) {
+			fprintf(stderr, "~");
+		}
+		fprintf(stderr, "\033[0m\n");
+
 		exit(1);
 }
 Variable *lookup_variable(const char *s, FILE *fp)
