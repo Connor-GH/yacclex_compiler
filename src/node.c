@@ -101,7 +101,7 @@ Node *make_node(NodeType type) {
 	return node;
 }
 
-VariableDeclaration *make_vardecl(Type type, const char *identifier) {
+VariableDeclaration *make_vardecl(Type type, char *identifier) {
 	VariableDeclaration *var_decl = xmalloc(sizeof(*var_decl));
 	var_decl->typeinfo = type;
 	var_decl->identifier = identifier;
@@ -122,7 +122,7 @@ Value *make_value_int(int64_t data) {
 	return value;
 }
 
-Function *make_function(const char *identifier, VariableDeclarations *var_decls, Type type, Statements *statements) {
+Function *make_function(char *identifier, VariableDeclarations *var_decls, Type type, Statements *statements) {
 	Function *func = xmalloc(sizeof(*func));
 	func->typeinfo = type;
 	func->var_decls = var_decls;

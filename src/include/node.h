@@ -42,7 +42,7 @@ typedef struct {
 
 typedef struct {
 	Type typeinfo;
-	const char *identifier;
+	char *identifier;
 } VariableDeclaration;
 
 typedef struct variable_list {
@@ -63,7 +63,7 @@ typedef struct statements {
 // fn IDENT ( VariableDeclarations* ) -> TYPE { BLOCK* }
 typedef struct {
 	Type typeinfo;
-	const char *identifier;
+	char *identifier;
 	VariableDeclarations *var_decls;
 	Statements *statements;
 } Function;
@@ -76,11 +76,11 @@ Statements *deep_copy_statements(Statements *to_copy);
 Node *deep_copy_node(Node *to_copy);
 
 Node *make_node(NodeType type);
-VariableDeclaration *make_vardecl(Type type, const char *identifier);
+VariableDeclaration *make_vardecl(Type type, char *identifier);
 Variable *make_variable(VariableDeclaration *var_decl, Node *init);
 Value *make_value_int(int64_t data);
 BinaryOp *make_binop(Node *left, Node *right, int op);
-Function *make_function(const char *identifier, VariableDeclarations *var_decls, Type type, Statements *statements);
+Function *make_function(char *identifier, VariableDeclarations *var_decls, Type type, Statements *statements);
 
 void print_node_tree(Node *node);
 void print_variable(Variable *variable);
